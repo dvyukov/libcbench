@@ -51,17 +51,59 @@ func main() {
 }
 
 func process(flags, files []string) error {
+	results, err := parseFiles(files)
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command("benchstat", flags...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	for fileIdx, file := range files {
+	for idx, res := range results {
+		pr, pw, err := os.Pipe()
+		if err != nil {
+			return fmt.Errorf("failed to create pipe: %w", err)
+		}
+		cmd.ExtraFiles = append(cmd.ExtraFiles, pr)
+		cmd.Args = append(cmd.Args, fmt.Sprintf("%v=/dev/fd/%v", res.Name, idx+3))
+		go func() {
+			for _, bench := range res.Benchmarks {
+				fmt.Fprintf(pw, "Benchmark%v 1 %v ns/op\n", bench.Name, bench.Val)
+			}
+			pw.Close()
+		}()
+	}
+	return cmd.Run()
+}
+
+type Result struct {
+	Name       string
+	Benchmarks []Benchmark
+}
+
+type Benchmark struct {
+	Name string
+	Val  float64
+}
+
+func parseFiles(files []string) ([]*Result, error) {
+	var results []*Result
+	names := make(map[string]*Result)
+	for _, file := range files {
 		data, err := os.ReadFile(file)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		study := new(Study)
 		if err := json.Unmarshal(data, study); err != nil {
-			return fmt.Errorf("failed to parse %v: %w", file, err)
+			return nil, fmt.Errorf("failed to parse %v: %w", file, err)
+		}
+		res := names[study.StudyName]
+		if res == nil {
+			res = &Result{
+				Name: study.StudyName,
+			}
+			names[study.StudyName] = res
+			results = append(results, res)
 		}
 		name := study.Configuration.Function
 		if pos := strings.LastIndexByte(name, '.'); pos != -1 {
@@ -69,25 +111,19 @@ func process(flags, files []string) error {
 		}
 		typ := strings.Replace(strings.TrimSpace(strings.TrimPrefix(
 			study.Configuration.SizeDistributionName, name)), " ", "_", -1)
-		pr, pw, err := os.Pipe()
-		if err != nil {
-			return fmt.Errorf("failed to create pipe: %w", err)
-		}
-		cmd.ExtraFiles = append(cmd.ExtraFiles, pr)
-		cmd.Args = append(cmd.Args, fmt.Sprintf("%v=/dev/fd/%v", study.StudyName, fileIdx+3))
-		go func() {
-			size := 0
-			for i, v := range study.Measurements {
-				if study.Configuration.IsSweepMode {
-					if i%study.Configuration.NumTrials == 0 {
-						size++
-					}
-					typ = fmt.Sprintf("%v", size)
+		size := 0
+		for i, v := range study.Measurements {
+			if study.Configuration.IsSweepMode {
+				if i%study.Configuration.NumTrials == 0 {
+					size++
 				}
-				fmt.Fprintf(pw, "Benchmark%v/%v 1 %v ns/op\n", name, typ, v*1e9)
+				typ = fmt.Sprintf("%v", size)
 			}
-			pw.Close()
-		}()
+			res.Benchmarks = append(res.Benchmarks, Benchmark{
+				Name: name + "/" + typ,
+				Val:  v * 1e9,
+			})
+		}
 	}
-	return cmd.Run()
+	return results, nil
 }
