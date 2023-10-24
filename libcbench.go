@@ -59,6 +59,7 @@ func process(flags, files []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	for idx, res := range results {
+		idx, res := idx, res
 		pr, pw, err := os.Pipe()
 		if err != nil {
 			return fmt.Errorf("failed to create pipe: %w", err)
