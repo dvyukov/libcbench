@@ -112,7 +112,7 @@ func parseFiles(files []string) ([]*Result, error) {
 		}
 		typ := strings.Replace(strings.TrimSpace(strings.TrimPrefix(
 			study.Configuration.SizeDistributionName, name)), " ", "_", -1)
-		size := 0
+		size := -1
 		for i, v := range study.Measurements {
 			if study.Configuration.IsSweepMode {
 				if i%study.Configuration.NumTrials == 0 {
